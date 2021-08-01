@@ -4,7 +4,7 @@ Title: Easy Factor Analysis
 Version: 0.1.0
 Author: Reza Hosseini, Fatemeh Hosseini
 Maintainer: Reza Hosseini <reza1317@gmail.com>
-Description: This package helps in performing a factor analysis by 
+Description: This package helps in performing a factor analysis by
     automating several steps.
 License: MIT
 Encoding: UTF-8

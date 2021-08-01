@@ -13,7 +13,7 @@ library("mice")
 library("psych")
 library("GPArotation")
 
-
+#' @export
 filter_multi_df_outliers_missing = function(
         df,
         value_cols=NULL) {
@@ -55,7 +55,7 @@ filter_multi_df_outliers_missing = function(
     ))
 }
 
-
+#' @export
 check_efa_assumptions = function(
         df,
         value_cols=NULL,
@@ -116,7 +116,8 @@ check_efa_assumptions = function(
 
 }
 
-# how many factors?
+#' Determines how many factors are suitable
+#' @export
 get_factor_num = function(
         df,
         value_cols=NULL,
@@ -152,6 +153,7 @@ get_factor_num = function(
 }
 
 
+#' @export
 fit_fa_model = function(
         df,
         factor_num,
