@@ -1,0 +1,280 @@
+---
+title: "Example EFA & CFA Analysis"
+output: html_document
+author: Fateme Hosseini, Reza Hossini
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE)
+library("devtools")
+install_github("Reza1317/easyfa")
+library("easyfa")
+library("data.table")
+library("MASS")
+```
+
+# Read inventory data
+```{r}
+data_path = "~/codes/redkite/projects/2020/motivation/data/publication_data/"
+fn = paste0(data_path, "/inventory_q25.csv")
+df = read.csv(fn)
+q_cols = setdiff(colnames(df), c("id"))
+df = df
+```
+
+# First we set the analysis constants
+```{r}
+# rotation method for EFA factors
+rotate = "varimax"
+# filtering threshold for filtering questions / items in EFA
+loading_thresh = 0.4
+# skewness upper bound for each item
+sk_upper = 3
+# kurtosis upper bound for each item
+kur_upper = 8
+# IQR lower bound for each item
+iqr_lower = 1
+```
+
+# Filter data
+## remove ids with too many missings, also remove outliers
+```{r}
+set.seed(2124)
+res = filter_multi_df_outliers_missing(
+    df=df,
+    value_cols=q_cols)
+
+df = res[["df"]]
+res[["missing_df"]]
+res[["outlier_df"]][["id"]]
+```
+
+# Multivariate normality test (Mardia Coeff)
+```{r}
+x = df[ , q_cols]
+sk = psych::skew(x, na.rm=TRUE, type=3)
+sk
+kur = psych::kurtosi(x, na.rm=TRUE, type=3)
+kur
+mardia = psych::mardia(x, na.rm=TRUE, plot=TRUE)
+mardia
+#plot(1:length(q_cols), abs(sk), col="blue", xaxt="n", ylim=c(0, 8))
+#points(1:length(q_cols), abs(kur), col="red")
+#axis(1, at=1:length(q_cols), labels=q_cols)
+#legend()
+
+sk_kur_df = data.frame(
+    "item"=q_cols,
+    skewness=round(sk, 2),
+    kurtosis=round(kur, 2))
+
+# some questions are rejected by this criteria
+# accepted are those which are not rejected
+sk_kur_df
+
+summary_df = t(apply(
+    X=x,
+    FUN=function(x)c(quantile(x, c(0.25, 0.5, 0.75)), "IQR"=IQR(x)),
+    MARGIN=2))
+
+# quartiles for the questions
+summary_df = cbind(sk_kur_df, summary_df)
+summary_df
+# this paper says that univariate skewness of the questions should be less than 2 in magnitude
+# and the kurtosis should be less than 7 in magnitude
+# http://edpsychassociates.com/Papers/EFAguide(2018).pdf
+summary_dt = data.table(summary_df)
+
+# we accept the questions which has
+# skew less than sk_upper (see above)
+# kurtosis less than kur_upper (see above)
+# IQR larger than iqr_lower (see above)
+summary_dt[ ,
+    acceptable := (
+        (abs(kur) <= kur_upper) &
+        (abs(sk) <= sk_upper) &
+        (IQR >= iqr_lower))]
+
+# summary_dt = merge(summary_dt, item_dt, on="item", sort=FALSE)
+summary_dt
+
+q_cols_normal = summary_dt[acceptable == TRUE][["item"]]
+length(q_cols_normal)
+q_cols_normal
+
+# we recalculate the mardia test / qq-plot for the normal qs
+df_normal = df[ , as.character(q_cols_normal)]
+mardia = psych::mardia(df_normal, na.rm=TRUE, plot=TRUE)
+mardia
+
+# small simulation with real normal distribution
+# with same number of items and responses
+# to see what Mardia coefficient looks like
+p = length(q_cols)
+n = dim(df)[1]
+chol = matrix(runif(p^2)*2-1, ncol=p)
+Sigma = t(chol) %*% chol
+u = MASS::mvrnorm(n = n, rep(0, p), Sigma, empirical=TRUE)
+# mardia = psych::mardia(u, na.rm=TRUE, plot=TRUE)
+# reset to normal questions only
+# q_cols = q_cols_normal
+```
+
+# Divide the data into two parts to perform EFA and CFA
+```{r}
+half_length = nrow(df) / 2
+df_efa = df[1:half_length, ]
+df_cfa = df[(half_length + 1):nrow(df), ]
+```
+
+# Check EFA assumptions
+```{r}
+df = df_efa
+res = check_efa_assumptions(
+    df=df,
+    value_cols=q_cols,
+    figs_path=NULL)
+# bartlet correlation test
+res[["barlet_test"]][["p.value"]]
+# kaiser sampling adequecy
+res[["kaiser_sampling_adequacy"]]
+res[["plt_func"]]()
+```
+
+# Get number of factors using parallel analysis
+```{r}
+res = get_factor_num(
+    df=df,
+    value_cols=q_cols,
+    figs_path=NULL)
+# R returns: Number of factors = with eigen values > eigen values of random data
+factor_num = res[["factor_num"]]
+factor_num
+```
+
+# Fit the EFA with those number of factors and remove items
+```{r}
+res = fit_fa_model(
+    df=df,
+    factor_num=factor_num,
+    rotate=rotate,
+    value_cols=q_cols,
+    loading_thresh=loading_thresh)
+
+df_filtered = res[["df_filtered"]]
+# Tucker Lewis Index
+res[["tuker_lewis_index"]]
+# RMSEA index
+res[["rmsea"]]
+res[["rejected_items"]]
+res[["cfi"]]
+accepted_items = res[["accepted_items"]]
+```
+
+# Fit the EFA using filtered data
+## get clusters plot
+```{r}
+res = fit_fa_model(
+    df=df_filtered,
+    factor_num=factor_num,
+    value_cols=accepted_items,
+    rotate=rotate,
+    fm="ml",
+    loading_thresh=loading_thresh)
+
+# Tucker Lewis Index
+res[["tuker_lewis_index"]]
+# RMSEA index
+res[["rmsea"]]
+# Checking if any item is rejected this time
+res[["rejected_items"]]
+res[["cfi"]]
+factor_item_list = res[["factor_item_list"]]
+names(factor_item_list) = paste0("F", 1:length(factor_item_list))
+
+x = factor_item_list
+
+func = function(i) {
+    data.frame(
+        item=x[[i]],
+        factor=rep(names(x)[[i]], length(x[[i]])))
+}
+
+cluster_df = do.call(rbind, lapply(X=1:length(x), FUN=func))
+
+fa_model = res[["fa_model"]]
+plot(fa_model, cut=loading_thresh)
+psych::fa.diagram(fa_model, cut=loading_thresh, cex=1.5)
+# total model output from R
+fa_model
+```
+
+
+# Calculate MacDonalds' Omega overall and for accepted items
+```{r}
+omega_model = psych::omega(m=df[ , accepted_items], nfactors=factor_num)
+# The ω_h coefficient
+omega_model[["omega_h"]]
+# limit of omega
+omega_model[["omega.lim"]]
+# Cronbach Alpha
+omega_model[["alpha"]]
+# The omega_t coefficient
+omega_model[["omega.tot"]]
+# The summary statistics for the omega total, omega hierarchical (general) and omega within each group.
+omega_model[["omega.group"]]
+```
+
+# CFA using lavaan package
+```{r}
+cluster_dt = data.table(cluster_df)
+agg_dt = cluster_dt[ , .(formula=paste0(item, collapse="+")), by=list(factor)]
+agg_dt
+
+agg_dt[["formula"]] = paste0(agg_dt[["F"]], "=~", agg_dt[["formula"]])
+
+lavaan_model_formula = paste0(agg_dt[["formula"]], collapse="\n")
+cat(lavaan_model_formula)
+
+
+lavaan_model_formula = ("
+Live=~q7+q8+q9+q10+q11+q13
+Pos=~q18+q20+q26+q27+q28+q29
+Super=~q22+q23+q24+q25
+Treat=~q30+q31+q32+q33
+Belong=~q35+q36+q37+q39+q40
+")
+
+
+lavaan_cfa_model = lavaan::cfa(lavaan_model_formula, data=df)
+
+summary(lavaan_cfa_model, fit.measures=TRUE, standardize=TRUE)
+
+
+#Cairo(
+#    file=paste0(figs_path, "cfa_sem.png"),
+#    type="png",
+#    units="in",
+#    width=30,
+#    height=15,
+#    pointsize=5,
+#    dpi=72)
+
+semPlot::semPaths(
+    lavaan_cfa_model,
+    whatLabels="std",
+    weighted=TRUE,
+    intercepts=TRUE,
+    style="lisrel",
+    nCharNodes=0,
+    nCharEdges=0,
+    shapeMan="diamond",
+    curveAdjacent=FALSE,
+    title=FALSE,
+    layout="tree2",
+    curvePivot=TRUE)
+
+dev.off()
+
+
+```
